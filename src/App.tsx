@@ -220,17 +220,15 @@ export default function App() {
   }, [items]);
 
   return (
-    <div className="min-h-screen bg-stone-50">
+    <div className="min-h-screen bg-blush-50">
       {/* Header */}
-      <header className="sticky top-0 z-20 bg-stone-50/90 backdrop-blur-md border-b border-stone-200">
+      <header className="sticky top-0 z-20 bg-blush-50/90 backdrop-blur-md border-b border-brand-100">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4">
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-purple-600 flex items-center justify-center shadow-sm opacity-80">
-                <Camera className="w-5 h-5 text-white" />
-              </div>
+              <img src="/snapsort-logo.png" alt="SnapSort logo" className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl object-contain" />
               <div>
-                <h1 className="text-xl font-bold tracking-tight text-stone-900">
+                <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-brand-800">
                   SnapSort
                 </h1>
                 <p className="text-sm text-stone-500 -mt-0.5">
@@ -254,16 +252,21 @@ export default function App() {
       </header>
 
       <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
+        <div className="mb-7 sm:mb-9">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-700 mb-2">Your private screenshot library</p>
+          <h2 className="text-3xl sm:text-4xl font-semibold tracking-tight text-brand-950">A little less scrolling.<br className="sm:hidden" /> A lot more remembering.</h2>
+          <p className="text-stone-600 mt-3 max-w-2xl text-sm sm:text-base">Keep the things you save close. Find them with a few words, with search that runs on your device.</p>
+        </div>
         {/* OCR status banner */}
         {ocrInit === 'loading' && (
-          <div className="mb-6 rounded-xl border border-purple-200 bg-purple-50 px-4 py-3 flex items-center gap-3">
-            <Loader2 className="w-5 h-5 text-purple-600 animate-spin shrink-0" />
+          <div className="mb-6 rounded-xl border border-brand-200 bg-brand-50 px-4 py-3 flex items-center gap-3">
+            <Loader2 className="w-5 h-5 text-brand-600 animate-spin shrink-0" />
             <div className="text-sm">
-              <p className="font-medium text-purple-900">
+              <p className="font-medium text-brand-900">
                 Setting up OCR engine — downloading language data on first use.
               </p>
               {ocrProgress && (
-                <p className="text-purple-700 text-xs mt-0.5">
+                <p className="text-brand-700 text-xs mt-0.5">
                   {ocrProgress.status}{' '}
                   {ocrProgress.progress > 0
                     ? `${Math.round(ocrProgress.progress * 100)}%`
@@ -309,7 +312,7 @@ export default function App() {
           />
           <button
             onClick={() => fileInputRef.current?.click()}
-            className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-purple-600 text-white font-semibold shadow-sm hover:bg-purple-700 active:scale-[0.98] transition-all"
+            className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-brand-600 text-white font-semibold shadow-sm hover:bg-brand-700 active:scale-[0.98] transition-all"
           >
             <Upload className="w-5 h-5 opacity-90" />
             <span className="text-[17px]">Import screenshots</span>
@@ -322,7 +325,7 @@ export default function App() {
               onChange={(e) => setQuery(e.target.value)}
               placeholder={searchMode === 'semantic' ? 'Try “bike repair bill” or “beginner coding notes”…' : 'Search exact words or numbers…'}
               aria-label="Search screenshots"
-              className="w-full pl-11 pr-4 py-3 rounded-xl border border-stone-200 bg-white text-stone-900 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-shadow"
+              className="w-full pl-11 pr-4 py-3 rounded-xl border border-brand-100 bg-white text-brand-950 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent transition-shadow"
             />
           </div>
         </div>
@@ -330,10 +333,10 @@ export default function App() {
         {/* Version label + stats */}
         <div className="flex items-center justify-between flex-wrap gap-3 mb-5">
           <div className="flex items-center gap-2 text-xs font-medium text-stone-500">
-            <Sparkles className="w-3.5 h-3.5 text-purple-500" />
-            <button onClick={() => setSearchMode('semantic')} aria-pressed={searchMode === 'semantic'} className={searchMode === 'semantic' ? 'text-purple-700 font-bold' : ''}>Semantic search</button>
+            <Sparkles className="w-3.5 h-3.5 text-brand-500" />
+            <button onClick={() => setSearchMode('semantic')} aria-pressed={searchMode === 'semantic'} className={searchMode === 'semantic' ? 'text-brand-700 font-bold' : ''}>Semantic search</button>
             <span className="text-stone-300">·</span>
-            <button onClick={() => setSearchMode('text')} aria-pressed={searchMode === 'text'} className={searchMode === 'text' ? 'text-purple-700 font-bold' : ''}>Text search</button>
+            <button onClick={() => setSearchMode('text')} aria-pressed={searchMode === 'text'} className={searchMode === 'text' ? 'text-brand-700 font-bold' : ''}>Text search</button>
           </div>
           {items.length > 0 && (
             <div className="flex items-center gap-3 text-xs text-stone-500">
@@ -346,7 +349,7 @@ export default function App() {
         </div>
 
         {searchMode === 'semantic' && (
-          <div className="mb-5 rounded-xl border border-purple-100 bg-purple-50/60 px-4 py-3 text-sm text-purple-900" role="status">
+          <div className="mb-5 rounded-xl border border-brand-100 bg-brand-50/60 px-4 py-3 text-sm text-brand-900" role="status">
             {semantic.error ? (
               <><p>Semantic search unavailable. Showing exact-text matches.</p><p className="text-xs mt-1 break-words">{semantic.error}</p><button className="mt-2 font-semibold underline" onClick={semantic.retry}>Retry semantic setup</button></>
             ) : (
@@ -362,7 +365,7 @@ export default function App() {
             <Loader2 className="w-8 h-8 text-stone-400 animate-spin" />
           </div>
         ) : searchMode === 'semantic' && !semantic.error && query.trim() && (!semantic.indexed || semantic.searching) ? (
-          <div className="flex items-center justify-center gap-3 py-20 text-purple-700"><Loader2 className="w-6 h-6 animate-spin" />{semantic.indexed ? 'Finding related screenshots…' : 'Preparing search…'}</div>
+          <div className="flex items-center justify-center gap-3 py-20 text-brand-700"><Loader2 className="w-6 h-6 animate-spin" />{semantic.indexed ? 'Finding related screenshots…' : 'Preparing search…'}</div>
         ) : filtered.length === 0 ? (
           <EmptyState hasItems={items.length > 0} onImport={() => fileInputRef.current?.click()} />
         ) : (
@@ -409,7 +412,7 @@ function StatusPill({
   if (count === 0) return null;
   const colors = {
     stone: 'bg-stone-100 text-stone-600',
-    purple: 'bg-purple-100 text-purple-700',
+    purple: 'bg-brand-100 text-brand-700',
     green: 'bg-green-100 text-green-700',
     red: 'bg-red-100 text-red-700',
   };
@@ -433,7 +436,7 @@ function ScreenshotCard({
   onRetry: () => void;
 }) {
   return (
-    <div className="group relative rounded-xl overflow-hidden bg-white border border-stone-200 shadow-sm hover:shadow-md transition-shadow cursor-pointer">
+    <div className="group relative rounded-xl overflow-hidden bg-white border border-brand-100 shadow-sm hover:shadow-md transition-shadow cursor-pointer">
       <div onClick={onClick} className="aspect-[4/3] bg-stone-100 overflow-hidden">
         {s.thumbnailUrl ? (
           <img
@@ -516,8 +519,8 @@ function EmptyState({
 }) {
   return (
     <div className="flex flex-col items-center justify-center py-16 sm:py-24 text-center">
-      <div className="w-16 h-16 rounded-2xl bg-purple-100 flex items-center justify-center mb-4">
-        <Camera className="w-8 h-8 text-purple-600" />
+      <div className="w-16 h-16 rounded-2xl bg-brand-100 flex items-center justify-center mb-4">
+        <Camera className="w-8 h-8 text-brand-600" />
       </div>
       <h2 className="text-lg font-semibold text-stone-800 mb-1">
         {hasItems ? 'No matches found' : 'No screenshots yet'}
@@ -530,7 +533,7 @@ function EmptyState({
       {!hasItems && (
         <button
           onClick={onImport}
-          className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-purple-600 text-white font-semibold shadow-sm hover:bg-purple-700 active:scale-[0.98] transition-all"
+          className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-brand-600 text-white font-semibold shadow-sm hover:bg-brand-700 active:scale-[0.98] transition-all"
         >
           <Upload className="w-5 h-5" />
           Import screenshots
@@ -569,11 +572,11 @@ function DetailModal({
       onClick={onClose}
     >
       <div
-        className="bg-stone-50 w-full sm:max-w-4xl sm:rounded-2xl rounded-t-2xl shadow-2xl max-h-[92vh] sm:max-h-[88vh] overflow-hidden flex flex-col"
+        className="bg-blush-50 w-full sm:max-w-4xl sm:rounded-2xl rounded-t-2xl shadow-2xl max-h-[92vh] sm:max-h-[88vh] overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Modal header */}
-        <div className="flex items-center justify-between px-5 py-3 border-b border-stone-200 bg-white">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-brand-100 bg-white">
           <div className="min-w-0">
             <p className="text-sm font-semibold text-stone-800 truncate" title={s.name}>
               {s.name}
@@ -622,7 +625,7 @@ function DetailModal({
               {s.status === 'ready' && s.text && (
                 <button
                   onClick={() => onCopy(s.text)}
-                  className="inline-flex items-center gap-1.5 text-sm font-medium text-purple-700 hover:bg-purple-50 px-3 py-1.5 rounded-lg transition-colors"
+                  className="inline-flex items-center gap-1.5 text-sm font-medium text-brand-700 hover:bg-brand-50 px-3 py-1.5 rounded-lg transition-colors"
                 >
                   {copied ? (
                     <>
@@ -641,7 +644,7 @@ function DetailModal({
 
             {s.status === 'processing' && (
               <div className="flex flex-col items-center justify-center py-12 gap-3">
-                <Loader2 className="w-6 h-6 text-purple-600 animate-spin" />
+                <Loader2 className="w-6 h-6 text-brand-600 animate-spin" />
                 <p className="text-sm text-stone-500">
                   Extracting text… {Math.round(s.progress * 100)}%
                 </p>
@@ -664,7 +667,7 @@ function DetailModal({
                 </div>
                 <button
                   onClick={onRetry}
-                  className="inline-flex items-center gap-1.5 text-sm font-medium text-purple-700 hover:bg-purple-50 px-4 py-2 rounded-lg transition-colors"
+                  className="inline-flex items-center gap-1.5 text-sm font-medium text-brand-700 hover:bg-brand-50 px-4 py-2 rounded-lg transition-colors"
                 >
                   <RotateCw className="w-4 h-4" />
                   Retry OCR
@@ -674,7 +677,7 @@ function DetailModal({
             {s.status === 'ready' && (
               <>
                 {s.text ? (
-                  <pre className="text-sm text-stone-700 whitespace-pre-wrap break-words font-sans leading-relaxed flex-1 overflow-y-auto scrollbar-thin bg-white rounded-lg border border-stone-200 p-4">
+                  <pre className="text-sm text-stone-700 whitespace-pre-wrap break-words font-sans leading-relaxed flex-1 overflow-y-auto scrollbar-thin bg-white rounded-lg border border-brand-100 p-4">
                     {s.text}
                   </pre>
                 ) : (
