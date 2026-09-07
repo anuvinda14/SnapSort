@@ -1,4 +1,4 @@
-export type Engine = 'tesseract' | 'paddle';
+export type Engine = 'tesseract' | 'adaptive';
 export interface EngineResult { text: string; setupMs: number; inferenceMs: number; elapsedMs: number }
 export function runEngine(engine: Engine, image: Blob, signal: AbortSignal): Promise<EngineResult> {
   return new Promise((resolve, reject) => {

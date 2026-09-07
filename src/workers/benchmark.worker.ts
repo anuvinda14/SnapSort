@@ -1,11 +1,10 @@
 /// <reference lib="webworker" />
-import { runPaddle } from '@snapsort/paddle-engine';
-self.onmessage = async ({ data }: MessageEvent<{engine: 'tesseract' | 'paddle'; image: Blob}>) => {
+self.onmessage = async ({ data }: MessageEvent<{engine: 'tesseract' | 'adaptive'; image: Blob}>) => {
   try {
-    if (data.engine === 'paddle') { self.postMessage({ result: await runPaddle(data.image) }); return; }
     const { createWorker } = await import('tesseract.js');
     const start = performance.now();
     const worker = await createWorker('eng', 1);
+    await worker.setParameters({ thresholding_method: data.engine === 'adaptive' ? '2' : '0' });
     const setupMs = performance.now() - start;
     try {
       const started = performance.now();

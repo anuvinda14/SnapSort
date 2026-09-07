@@ -57,13 +57,4 @@ Model: https://huggingface.co/Xenova/all-MiniLM-L6-v2
 
 Choose **OCR lab** in the header. Add up to 20 PNG/JPEG/WebP samples, label their type and enter the correct transcription. Compare the unprocessed originals; the lab reports setup, recognition and total time separately, plus character/word error rates. Normalization collapses whitespace and applies Unicode NFC while preserving case and punctuation. Error rates can exceed 100% for insertions. Very long text is not scored. Memory consumption is not measured. Reports contain source filenames and transcriptions, but no image bytes. Samples/results are temporary until exported; the main screenshot library is untouched.
 
-The optional Paddle adapter targets `@paddleocr/paddleocr-js@0.4.2`, PP-OCRv5 mobile detection and recognition, WASM with one thread. Install it before starting Vite:
-
-```sh
-pnpm setup:paddle
-pnpm dev
-```
-
-Commit the updated package.json and pnpm-lock.yaml after installation. Without the optional dependency, the app builds normally and the lab reports Paddle as unavailable. Installing requires network access; no remote OCR API is used. Paddle models/runtime assets are downloaded on demand. Neither full offline operation nor the installed Paddle adapter's browser execution has been verified in this environment. The existing English Tesseract library engine stays unchanged.
-
-Validation status: comparison metric tests and the build without Paddle pass. No Paddle accuracy, timing, calligraphy, or annotation benchmark results are claimed. Supply representative annotated and calligraphy images with correct transcriptions before selecting a default engine. Alternate engine runs can be affected by browser caches and thermal load; repeat with reversed order for rigorous measurements.
+The lab now compares Tesseract's standard Otsu thresholding with local Sauvola adaptive thresholding using the same English model. PaddleOCR has been removed. No extra installation or model is required beyond the existing Tesseract setup. Original files remain unchanged. This does not detect highlight meaning, interpret arrows, or guarantee handwriting/calligraphy recognition.
