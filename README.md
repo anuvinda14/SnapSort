@@ -21,6 +21,16 @@ Open the local URL printed in the terminal. Import PNG, JPEG, or WebP screenshot
 - Images, OCR text, and embeddings stored in browser IndexedDB. No login or application backend.
 - Text search remains available if semantic setup fails.
 
+## Categories and suggested actions
+
+The desktop library and sidebar use a 3:1 split. The sidebar uses a 7:3 split for categories and suggested actions, with independent scrolling. On smaller screens the panels stack below the library.
+
+Categories are detected from OCR text using local rules: events, travel, receipts, study, health, credentials and other. A screenshot can match multiple categories. Category selection combines with the current search.
+
+Event, appointment and deadline text can produce a calendar suggestion. Review the source screenshot, edit title/date/time/location, select timed or all-day, confirm details and approve to download an `.ics` file. Open that file in a calendar application to complete the import. No calendar account is connected and nothing is added automatically. Dismissed and exported actions are saved locally, with a history view and a Review again action.
+
+These suggestions are rule-based, not generative AI. Ambiguous or missing dates require review. No full screenshot text is automatically copied into calendar notes. Clearing browser storage removes stored screenshots and action history.
+
 ## Demo
 
 Import a repair receipt, flight itinerary, and programming notes. Compare Text search with Semantic search using “bike repair bill”, “my plane ticket”, and “beginner coding notes”. Exact phrases do not have to appear in the screenshot for semantic matching.
@@ -36,6 +46,9 @@ Semantic matching uses extracted text, not a vision model: it cannot interpret u
 ```sh
 pnpm typecheck
 pnpm build
+node --experimental-strip-types --test tests/insights.test.mjs
 ```
+
+The test command requires Node.js 22.6+ (Node 24 recommended).
 
 Model: https://huggingface.co/Xenova/all-MiniLM-L6-v2

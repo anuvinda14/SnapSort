@@ -24,3 +24,36 @@
     background: #a8a29e;
   }
 }
+
+@layer components {
+  .app-shell { @apply min-h-screen; }
+  .snapsort-workspace { @apply w-full max-w-[1680px] mx-auto p-4 sm:p-6 grid gap-5; }
+  .library-pane { @apply min-w-0; }
+  .insights-panel { @apply grid gap-4 min-w-0; }
+  .insight-section { @apply min-h-0 rounded-2xl border border-brand-100 bg-white/80 flex flex-col overflow-hidden; }
+  .panel-heading { @apply p-5; }
+  .panel-eyebrow { @apply text-[10px] font-semibold tracking-[0.14em] text-brand-600; }
+  .panel-scroll { @apply overflow-y-auto min-h-0 flex-1; }
+  .category-button { @apply w-full flex items-center gap-2 p-2.5 rounded-xl text-stone-600 mb-1 transition-colors hover:bg-brand-50; }
+  .category-button.is-selected { @apply bg-brand-50 text-brand-800; }
+  .category-icon { @apply p-2 rounded-lg bg-blush-50 text-brand-600; }
+  .category-count { @apply text-xs px-2 py-1 rounded-md bg-white text-brand-700; }
+  .icon-button { @apply p-1.5 rounded-lg text-stone-500 hover:bg-brand-50 hover:text-brand-700 disabled:opacity-40; }
+  .small-primary { @apply inline-flex items-center justify-center gap-1.5 bg-brand-600 hover:bg-brand-700 text-white rounded-lg px-3 py-2 text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed; }
+  .calendar-dialog { @apply p-0 rounded-2xl border border-brand-100 shadow-2xl text-brand-950; width:min(960px, calc(100vw - 24px)); max-height:90dvh; }
+  .calendar-dialog::backdrop { background:rgb(11 39 56 / 55%); backdrop-filter:blur(4px); }
+  .review-heading { @apply flex items-center justify-between p-5 border-b border-brand-100 bg-white; }
+  .review-body { @apply grid md:grid-cols-2; }
+  .review-source { @apply p-5 bg-blush-50 min-w-0; }
+  .review-form { @apply p-5 bg-white min-w-0; }
+  .review-label { @apply block text-xs font-semibold text-brand-900 mb-4; }
+  .review-input { @apply block w-full min-w-0 mt-1.5 px-3 py-2.5 border border-brand-100 rounded-lg text-sm font-normal bg-white focus:outline-none focus:ring-2 focus:ring-brand-400; }
+  button:focus-visible { @apply outline outline-2 outline-offset-2 outline-brand-500; }
+  @media (min-width:1024px) {
+    .app-shell { height:100dvh; @apply flex flex-col overflow-hidden; }
+    .snapsort-workspace { grid-template-columns:minmax(0,3fr) minmax(0,1fr); @apply flex-1 min-h-0; }
+    .library-pane { @apply overflow-y-auto pr-2; }
+    .insights-panel { grid-template-rows:minmax(0,7fr) minmax(0,3fr); @apply min-h-0; }
+  }
+  @media (max-width:1023px) { .insight-section { max-height:480px; } }
+}

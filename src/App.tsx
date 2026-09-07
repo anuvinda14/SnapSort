@@ -20,6 +20,10 @@ import { dbGetAll, dbPut, dbDelete, dbClear } from '@/lib/db';
 import { recognize, preloadWorker, resetWorker } from '@/lib/ocr';
 import { makeThumbnail, formatBytes, formatTime } from '@/lib/image';
 import { useSemanticSearch } from '@/hooks/useSemanticSearch';
+import { useScreenshotInsights } from '@/hooks/useScreenshotInsights';
+import { InsightsPanel } from '@/components/InsightsPanel';
+import { CalendarReview } from '@/components/CalendarReview';
+import type { CalendarSuggestion } from '@/insights-types';
 
 const ACCEPTED = '.png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp';
 const INIT_TIMEOUT_MS = 60_000;
@@ -39,6 +43,10 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const processingRef = useRef(false);
   const semantic = useSemanticSearch(items, query, searchMode === 'semantic', !loading);
+
+  const panel = useScreenshotInsights(items, !loading);
+  const [review, setReview] = useState<CalendarSuggestion | null>(null);
+  const [notice, setNotice] = useState('');
 
   // Load from IndexedDB on mount
   useEffect(() => {
@@ -208,6 +216,10 @@ export default function App() {
     return [...exact, ...ranked.filter(s => !exact.some(e => e.id === s.id))];
   }, [items, query, searchMode, semantic.matches, semantic.error]);
 
+  const categoryIds = new Set(panel.filteredItems.map(s => s.id));
+  const displayed = filtered.filter(s => categoryIds.has(s.id));
+  const reviewSource = review ? items.find(s => s.id === review.screenshotId) : null;
+
   const counts = useMemo(() => {
     const c: Record<ScreenshotStatus, number> = {
       queued: 0,
@@ -220,13 +232,13 @@ export default function App() {
   }, [items]);
 
   return (
-    <div className="min-h-screen bg-blush-50">
+    <div className="app-shell bg-blush-50">
       {/* Header */}
       <header className="sticky top-0 z-20 bg-blush-50/90 backdrop-blur-md border-b border-brand-100">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4">
+        <div className="max-w-[1680px] mx-auto px-4 sm:px-6 py-3">
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <div className="flex items-center gap-3">
-              <img src="/snapsort-logo.png" alt="SnapSort logo" className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl object-contain" />
+              <img src="/snapsort-logo.png" alt="SnapSort logo" className="w-16 h-16 rounded-2xl object-contain" />
               <div>
                 <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-brand-800">
                   SnapSort
@@ -251,7 +263,8 @@ export default function App() {
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
+      <div className="snapsort-workspace">
+      <main className="library-pane">
         <div className="mb-7 sm:mb-9">
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-700 mb-2">Your private screenshot library</p>
           <h2 className="text-3xl sm:text-4xl font-semibold tracking-tight text-brand-950">A little less scrolling.<br className="sm:hidden" /> A lot more remembering.</h2>
@@ -366,11 +379,11 @@ export default function App() {
           </div>
         ) : searchMode === 'semantic' && !semantic.error && query.trim() && (!semantic.indexed || semantic.searching) ? (
           <div className="flex items-center justify-center gap-3 py-20 text-brand-700"><Loader2 className="w-6 h-6 animate-spin" />{semantic.indexed ? 'Finding related screenshots…' : 'Preparing search…'}</div>
-        ) : filtered.length === 0 ? (
+        ) : displayed.length === 0 ? (
           <EmptyState hasItems={items.length > 0} onImport={() => fileInputRef.current?.click()} />
         ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-            {filtered.map((s) => (
+          <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-4">
+            {displayed.map((s) => (
               <ScreenshotCard
                 key={s.id}
                 screenshot={s}
@@ -382,6 +395,13 @@ export default function App() {
           </div>
         )}
       </main>
+      <InsightsPanel panel={panel} total={items.length} onReview={setReview} />
+      </div>
+      {notice && <div role="status" className="fixed bottom-5 left-5 right-5 sm:right-auto sm:max-w-lg z-40 bg-brand-950 text-white rounded-xl p-4 shadow-lg flex items-center gap-3 text-sm">{notice}<button aria-label="Dismiss notification" onClick={() => setNotice('')}><X size={18} /></button></div>}
+      {review && reviewSource && <CalendarReview key={review.id} suggestion={review} screenshot={reviewSource} onClose={() => setReview(null)} onApprove={async event => {
+        await panel.approveCalendar(review.id, event, { approved: true });
+        setNotice('Calendar file prepared. Open the downloaded file in your calendar to add the event.');
+      }} />}
 
       {/* Detail modal */}
       {selected && (
