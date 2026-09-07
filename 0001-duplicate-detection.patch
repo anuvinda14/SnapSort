@@ -1,0 +1,875 @@
+
+Computes a 64-bit perceptual hash (dHash) for each screenshot in the
+browser, independent of OCR text, so it also catches duplicates of
+annotated/marked-up screenshots that text-based matching misses.
+Near-identical hashes (Hamming distance <= 8/64) are grouped and
+surfaced under a new "Possible duplicates" section in the sidebar,
+following the same suggest -> review -> decide pattern already used
+for calendar suggestions.
+
+Nothing is deleted automatically: reviewing a group opens every
+screenshot side by side, pre-selects all but the newest for deletion,
+and lets the user adjust the selection or dismiss the group ("keep
+all", persisted locally so it isn't suggested again).
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01TLnEK4rPtQLnaaM4EASoMH
+---
+ README.md                           |  11 +-
+ src/App.tsx                         |  64 ++++++++++-
+ src/components/DuplicatesReview.tsx | 162 ++++++++++++++++++++++++++++
+ src/components/InsightsPanel.tsx    |  34 +++++-
+ src/duplicate-types.ts              |  14 +++
+ src/hooks/useDuplicates.ts          |  93 ++++++++++++++++
+ src/index.css                       |   2 +-
+ src/lib/duplicate-decisions.ts      |  58 ++++++++++
+ src/lib/duplicates.ts               |  89 +++++++++++++++
+ src/lib/phash.ts                    |  72 +++++++++++++
+ src/types.ts                        |   2 +
+ tests/duplicates.test.mjs           |  59 ++++++++++
+ 12 files changed, 654 insertions(+), 6 deletions(-)
+ create mode 100644 src/components/DuplicatesReview.tsx
+ create mode 100644 src/duplicate-types.ts
+ create mode 100644 src/hooks/useDuplicates.ts
+ create mode 100644 src/lib/duplicate-decisions.ts
+ create mode 100644 src/lib/duplicates.ts
+ create mode 100644 src/lib/phash.ts
+ create mode 100644 tests/duplicates.test.mjs
+
+diff --git a/README.md b/README.md
+index 12f1b90..f65bc72 100644
+--- a/README.md
++++ b/README.md
+@@ -20,6 +20,7 @@ Open the local URL printed in the terminal. Import PNG, JPEG, or WebP screenshot
+ - Overlapping text chunks, normalized embeddings, cosine similarity ranking, and exact-text matches promoted first.
+ - Images, OCR text, and embeddings stored in browser IndexedDB. No login or application backend.
+ - Text search remains available if semantic setup fails.
++- On-device duplicate detection (image similarity, not OCR text) with a review-and-delete flow. See "Duplicate detection" below.
+ 
+ ## Categories and suggested actions
+ 
+@@ -46,7 +47,7 @@ Semantic matching uses extracted text, not a vision model: it cannot interpret u
+ ```sh
+ pnpm typecheck
+ pnpm build
+-node --experimental-strip-types --test tests/insights.test.mjs
++node --experimental-strip-types --test tests/insights.test.mjs tests/duplicates.test.mjs
+ ```
+ 
+ The test command requires Node.js 22.6+ (Node 24 recommended).
+@@ -59,6 +60,14 @@ Choose **OCR lab** in the header. Add up to 20 PNG/JPEG/WebP samples, label thei
+ 
+ The lab now compares Tesseract's standard Otsu thresholding with local Sauvola adaptive thresholding using the same English model. PaddleOCR has been removed. No extra installation or model is required beyond the existing Tesseract setup. Original files remain unchanged. This does not detect highlight meaning, interpret arrows, or guarantee handwriting/calligraphy recognition.
+ 
++## Duplicate detection
++
++SnapSort computes a small perceptual hash (dHash) for every screenshot in the browser, independent of OCR — it looks at the image itself, not its text, so it also catches duplicates of annotated or markup-heavy screenshots that OCR-based matching misses. Screenshots whose hashes are nearly identical are grouped under **Possible duplicates** in the sidebar.
++
++Nothing is deleted automatically. Choosing **Review** on a suggestion opens every screenshot in that group side by side; the newest is pre-selected to keep and the rest are marked for deletion, but any selection can be changed before confirming, and at least one screenshot must be kept. **Not duplicates — keep all** dismisses the group so it isn't suggested again; dismissed groups are listed under the section's history toggle and can be reviewed again from there.
++
++Hashing runs in the background and does not block import or search. This is a prototype similarity check (Hamming distance over a 64-bit hash), not exact-duplicate detection — two different images can occasionally hash close enough to be grouped, and edited/cropped copies of the same screenshot may or may not group depending on how much changed. Always review before deleting.
++
+ ## Improve text recognition in the library
+ 
+ Open a ready screenshot and choose **Improve text recognition**. Adaptive Tesseract runs in a separate worker with cancellation and a three-minute timeout. Compare the current text with the adaptive result and choose **Use improved text** or **Keep current text**. Empty, identical or stale candidates cannot be applied. Accepted changes are saved before the UI updates; the previous transcription is retained in the screenshot record. The original image remains unchanged. Existing text-dependent search indexing, categories and calendar suggestions refresh from the accepted text. No automatic accuracy claim is made.
+diff --git a/src/App.tsx b/src/App.tsx
+index 0ff4087..ed61b27 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -20,10 +20,13 @@ import type { Screenshot, ScreenshotStatus, OcrProgress } from '@/types';
+ import { dbGetAll, dbPut, dbDelete, dbClear, dbAcceptOcr } from '@/lib/db';
+ import { recognize, preloadWorker, resetWorker } from '@/lib/ocr';
+ import { makeThumbnail, formatBytes, formatTime } from '@/lib/image';
++import { computeDHash } from '@/lib/phash';
+ import { useSemanticSearch } from '@/hooks/useSemanticSearch';
+ import { useScreenshotInsights } from '@/hooks/useScreenshotInsights';
++import { useDuplicates, type DuplicateGroupWithStatus } from '@/hooks/useDuplicates';
+ import { InsightsPanel } from '@/components/InsightsPanel';
+ import { CalendarReview } from '@/components/CalendarReview';
++import { DuplicatesReview } from '@/components/DuplicatesReview';
+ import type { CalendarSuggestion } from '@/insights-types';
+ 
+ const ACCEPTED = '.png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp';
+@@ -46,8 +49,11 @@ export default function App() {
+   const semantic = useSemanticSearch(items, query, searchMode === 'semantic', !loading);
+ 
+   const panel = useScreenshotInsights(items, !loading);
++  const duplicates = useDuplicates(items, !loading);
+   const [review, setReview] = useState<CalendarSuggestion | null>(null);
++  const [duplicateGroup, setDuplicateGroup] = useState<DuplicateGroupWithStatus | null>(null);
+   const [notice, setNotice] = useState('');
++  const hashingRef = useRef(false);
+ 
+   // Load from IndexedDB on mount
+   useEffect(() => {
+@@ -140,6 +146,35 @@ export default function App() {
+     }
+   }, [ocrInit, processQueue]);
+ 
++  // Compute perceptual hashes for duplicate detection, one at a time in the background.
++  // Runs for any screenshot missing a hash — new imports (backup, in case the inline
++  // hash below failed) and pre-existing library items from before this feature existed.
++  const processHashQueue = useCallback(async () => {
++    if (hashingRef.current) return;
++    hashingRef.current = true;
++    try {
++      let snapshot = await dbGetAll();
++      while (true) {
++        const next = snapshot.find((s) => s.phash === undefined);
++        if (!next) break;
++        try {
++          const phash = await computeDHash(next.blob);
++          updateItem(next.id, { phash });
++        } catch (e) {
++          console.error('Failed to hash screenshot for duplicate detection', e);
++          updateItem(next.id, { phash: 'error' }); // don't retry a blob that can't be hashed
++        }
++        snapshot = await dbGetAll();
++      }
++    } finally {
++      hashingRef.current = false;
++    }
++  }, [updateItem]);
++
++  useEffect(() => {
++    if (!loading) processHashQueue();
++  }, [loading, processHashQueue]);
++
+   const handleFiles = useCallback(
+     async (files: FileList | null) => {
+       if (!files || files.length === 0) return;
+@@ -150,7 +185,10 @@ export default function App() {
+           file.type === 'image/jpeg' ||
+           file.type === 'image/webp';
+         if (!okType) continue;
+-        const thumb = await makeThumbnail(file).catch(() => '');
++        const [thumb, phash] = await Promise.all([
++          makeThumbnail(file).catch(() => ''),
++          computeDHash(file).catch(() => 'error'),
++        ]);
+         const item: Screenshot = {
+           id: crypto.randomUUID(),
+           name: file.name,
+@@ -162,6 +200,7 @@ export default function App() {
+           status: 'queued',
+           text: '',
+           progress: 0,
++          phash,
+         };
+         valid.push(item);
+       }
+@@ -397,13 +436,34 @@ export default function App() {
+           </div>
+         )}
+       </main>
+-      <InsightsPanel panel={panel} total={items.length} onReview={setReview} />
++      <InsightsPanel panel={panel} duplicates={duplicates} total={items.length} onReview={setReview} onReviewDuplicates={setDuplicateGroup} />
+       </div>
+       {notice && <div role="status" className="fixed bottom-5 left-5 right-5 sm:right-auto sm:max-w-lg z-40 bg-brand-950 text-white rounded-xl p-4 shadow-lg flex items-center gap-3 text-sm">{notice}<button aria-label="Dismiss notification" onClick={() => setNotice('')}><X size={18} /></button></div>}
+       {review && reviewSource && <CalendarReview key={review.id} suggestion={review} screenshot={reviewSource} onClose={() => setReview(null)} onApprove={async event => {
+         await panel.approveCalendar(review.id, event, { approved: true });
+         setNotice('Calendar file prepared. Open the downloaded file in your calendar to add the event.');
+       }} />}
++      {duplicateGroup && (() => {
++        const groupScreenshots = duplicateGroup.screenshotIds
++          .map((id) => items.find((s) => s.id === id))
++          .filter((s): s is Screenshot => !!s);
++        if (groupScreenshots.length < 2) return null;
++        return (
++          <DuplicatesReview
++            key={duplicateGroup.id}
++            screenshots={groupScreenshots}
++            onClose={() => setDuplicateGroup(null)}
++            onDelete={async (ids) => {
++              for (const id of ids) await handleDelete(id);
++              setNotice(`Deleted ${ids.length} duplicate ${ids.length === 1 ? 'screenshot' : 'screenshots'}.`);
++            }}
++            onKeepAll={async () => {
++              await duplicates.dismissGroup(duplicateGroup.id);
++              setNotice('Kept both — this group won’t be suggested again.');
++            }}
++          />
++        );
++      })()}
+ 
+       {/* Detail modal */}
+       {selected && (
+diff --git a/src/components/DuplicatesReview.tsx b/src/components/DuplicatesReview.tsx
+new file mode 100644
+index 0000000..8faff4c
+--- /dev/null
++++ b/src/components/DuplicatesReview.tsx
+@@ -0,0 +1,162 @@
++import { useEffect, useRef, useState } from 'react';
++import { Layers, Loader2, Trash2, X } from 'lucide-react';
++import type { Screenshot } from '@/types';
++import { formatBytes, formatTime } from '@/lib/image';
++
++export function DuplicatesReview({
++  screenshots,
++  onClose,
++  onDelete,
++  onKeepAll,
++}: {
++  /** Newest first. Must have at least 2 entries. */
++  screenshots: Screenshot[];
++  onClose: () => void;
++  onDelete: (ids: string[]) => Promise<void>;
++  onKeepAll: () => Promise<void>;
++}) {
++  const dialog = useRef<HTMLDialogElement>(null);
++  const [urls, setUrls] = useState<Record<string, string>>({});
++  // Default: keep the newest, mark the rest for deletion. The user can change any of it before confirming.
++  const [toDelete, setToDelete] = useState<Set<string>>(() => new Set(screenshots.slice(1).map((s) => s.id)));
++  const [busy, setBusy] = useState(false);
++  const [error, setError] = useState('');
++
++  useEffect(() => {
++    const element = dialog.current!;
++    element.showModal();
++    return () => { if (element.open) element.close(); };
++  }, []);
++
++  useEffect(() => {
++    const next: Record<string, string> = {};
++    for (const s of screenshots) next[s.id] = URL.createObjectURL(s.blob);
++    setUrls(next);
++    return () => { Object.values(next).forEach((url) => URL.revokeObjectURL(url)); };
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [screenshots.map((s) => s.id).join(',')]);
++
++  function toggle(id: string) {
++    setToDelete((prev) => {
++      const next = new Set(prev);
++      if (next.has(id)) next.delete(id);
++      else next.add(id);
++      return next;
++    });
++  }
++
++  const keepCount = screenshots.length - toDelete.size;
++
++  async function confirmDelete() {
++    if (busy || toDelete.size === 0 || keepCount < 1) return;
++    setBusy(true);
++    setError('');
++    try {
++      await onDelete([...toDelete]);
++      onClose();
++    } catch (e) {
++      setError(e instanceof Error ? e.message : String(e));
++    } finally {
++      setBusy(false);
++    }
++  }
++
++  async function keepAll() {
++    if (busy) return;
++    setBusy(true);
++    setError('');
++    try {
++      await onKeepAll();
++      onClose();
++    } catch (e) {
++      setError(e instanceof Error ? e.message : String(e));
++    } finally {
++      setBusy(false);
++    }
++  }
++
++  return (
++    <dialog
++      ref={dialog}
++      aria-labelledby="duplicates-heading"
++      className="calendar-dialog"
++      onCancel={(e) => { if (busy) e.preventDefault(); else onClose(); }}
++    >
++      <div className="review-heading">
++        <div>
++          <p className="panel-eyebrow mb-1">SUGGESTED ACTION</p>
++          <h2 id="duplicates-heading" className="text-xl font-semibold text-brand-950 flex items-center gap-2">
++            <Layers size={19} />
++            Review possible duplicates
++          </h2>
++        </div>
++        <button disabled={busy} className="icon-button" aria-label="Close duplicates review" onClick={onClose}>
++          <X size={19} />
++        </button>
++      </div>
++      <div className="p-5">
++        <p className="text-sm text-stone-600 mb-4">
++          These {screenshots.length} screenshots look visually alike (matched by image similarity, not by their text). Nothing is
++          deleted automatically — the newest is kept by default; adjust the selection and confirm.
++        </p>
++        {error && <p role="alert" className="rounded-lg bg-red-50 text-red-700 p-3 text-sm mb-4">{error}</p>}
++        <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 max-h-[55vh] overflow-y-auto scrollbar-thin pr-1">
++          {screenshots.map((s, i) => {
++            const marked = toDelete.has(s.id);
++            return (
++              <div
++                key={s.id}
++                className={`relative rounded-xl border-2 overflow-hidden transition-colors ${marked ? 'border-red-300' : 'border-brand-200'}`}
++              >
++                <button
++                  type="button"
++                  onClick={() => toggle(s.id)}
++                  className="block w-full text-left relative"
++                  aria-pressed={marked}
++                  aria-label={`${marked ? 'Unmark' : 'Mark'} ${s.name} for deletion`}
++                >
++                  <div className="aspect-[4/3] bg-stone-100">
++                    {urls[s.id] && <img src={urls[s.id]} alt={s.name} className="w-full h-full object-cover" />}
++                  </div>
++                  {marked && (
++                    <div className="absolute inset-0 bg-red-900/30 flex items-center justify-center pointer-events-none">
++                      <Trash2 className="w-6 h-6 text-white" />
++                    </div>
++                  )}
++                </button>
++                <div className="p-2 bg-white">
++                  <p className="text-xs font-medium text-stone-700 truncate" title={s.name}>{s.name}</p>
++                  <p className="text-[11px] text-stone-400">
++                    {formatBytes(s.size)} · {formatTime(s.createdAt)}
++                    {i === 0 ? ' · Newest' : ''}
++                  </p>
++                  <label className="flex items-center gap-2 mt-1.5 text-xs text-stone-600">
++                    <input type="checkbox" checked={marked} onChange={() => toggle(s.id)} />
++                    Delete this one
++                  </label>
++                </div>
++              </div>
++            );
++          })}
++        </div>
++        {keepCount < 1 && (
++          <p className="text-xs text-red-600 mt-3">Keep at least one screenshot from this group.</p>
++        )}
++        <div className="flex flex-wrap justify-end gap-3 mt-6">
++          <button type="button" disabled={busy} onClick={keepAll} className="px-4 py-2.5 text-sm font-medium text-stone-600 rounded-lg hover:bg-stone-100">
++            Not duplicates — keep all
++          </button>
++          <button
++            type="button"
++            disabled={busy || toDelete.size === 0 || keepCount < 1}
++            onClick={confirmDelete}
++            className="small-primary px-4 py-2.5 text-sm !bg-red-600 hover:!bg-red-700"
++          >
++            {busy ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
++            Delete {toDelete.size} {toDelete.size === 1 ? 'screenshot' : 'screenshots'}
++          </button>
++        </div>
++      </div>
++    </dialog>
++  );
++}
+diff --git a/src/components/InsightsPanel.tsx b/src/components/InsightsPanel.tsx
+index 3b0af1c..f1d42b0 100644
+--- a/src/components/InsightsPanel.tsx
++++ b/src/components/InsightsPanel.tsx
+@@ -1,17 +1,28 @@
+-import { BookOpen, CalendarDays, Check, ChevronRight, FileText, FolderOpen, HeartPulse, History, KeyRound, LayoutGrid, Plane, RotateCcw, Sparkles } from 'lucide-react';
++import { BookOpen, CalendarDays, Check, ChevronRight, FileText, FolderOpen, HeartPulse, History, KeyRound, Layers, LayoutGrid, Plane, RotateCcw, Sparkles } from 'lucide-react';
+ import { useState } from 'react';
+ import type { CategoryId, CalendarSuggestion } from '@/insights-types';
+ import type { useScreenshotInsights } from '@/hooks/useScreenshotInsights';
++import type { useDuplicates, DuplicateGroupWithStatus } from '@/hooks/useDuplicates';
+ 
+ type PanelData = ReturnType<typeof useScreenshotInsights>;
++type DuplicatesData = ReturnType<typeof useDuplicates>;
+ const icons = { events: CalendarDays, travel: Plane, receipts: FileText, study: BookOpen, health: HeartPulse, credentials: KeyRound, other: FolderOpen };
+ 
+-export function InsightsPanel({ panel, total, onReview }: { panel: PanelData; total: number; onReview: (suggestion: CalendarSuggestion) => void }) {
++export function InsightsPanel({ panel, duplicates, total, onReview, onReviewDuplicates }: {
++  panel: PanelData;
++  duplicates: DuplicatesData;
++  total: number;
++  onReview: (suggestion: CalendarSuggestion) => void;
++  onReviewDuplicates: (group: DuplicateGroupWithStatus) => void;
++}) {
+   const [history, setHistory] = useState(false);
++  const [dupHistory, setDupHistory] = useState(false);
+   const resolved = panel.suggestions.filter(s => s.status !== 'pending');
+   const visible = history ? resolved : panel.pendingSuggestions;
++  const dupVisible = dupHistory ? duplicates.groups.filter(g => g.status === 'dismissed') : duplicates.pendingGroups;
+   async function dismiss(id: string) { try { await panel.dismissSuggestion(id); } catch { /* Error is shown through panel.error. */ } }
+   async function reset(id: string) { try { await panel.resetSuggestion(id); } catch { /* Error is shown through panel.error. */ } }
++  async function resetDup(id: string) { try { await duplicates.resetGroup(id); } catch { /* Error is shown through duplicates.error. */ } }
+   return (
+     <aside className="insights-panel" aria-label="Screenshot insights">
+       <section className="insight-section categories-section" aria-labelledby="categories-title">
+@@ -28,6 +39,25 @@ export function InsightsPanel({ panel, total, onReview }: { panel: PanelData; to
+         <p className="px-5 py-3 border-t border-brand-100/70 text-[11px] text-stone-500">A screenshot can belong to more than one category.</p>
+       </section>
+ 
++      <section className="insight-section duplicates-section" aria-labelledby="duplicates-title">
++        <div className="px-5 pt-4 pb-3 flex items-start justify-between gap-2 border-b border-brand-100/70">
++          <div><h2 id="duplicates-title" className="font-semibold text-brand-950 flex items-center gap-2"><Layers size={16} className="text-brand-600" />{dupHistory ? 'Dismissed duplicates' : 'Possible duplicates'}</h2><p className="text-[11px] text-stone-500 mt-1">Visually similar screenshots, matched on-device.</p></div>
++          <button className="icon-button shrink-0" title={dupHistory ? 'Show possible duplicates' : 'Show dismissed duplicates'} aria-label={dupHistory ? 'Show possible duplicates' : 'Show dismissed duplicates'} onClick={() => setDupHistory(v => !v)}><History size={16} /></button>
++        </div>
++        <div className="panel-scroll p-3 space-y-3">
++          {duplicates.error && <p role="alert" className="text-xs text-red-700 bg-red-50 border border-red-100 rounded-lg p-3 break-words">{duplicates.error}</p>}
++          {duplicates.loading ? <p className="p-2 text-sm text-stone-500">Scanning for duplicates…</p> : dupVisible.length === 0 ? (
++            <div className="px-2 py-3 flex gap-3 text-sm text-stone-500"><Check size={18} className="text-brand-500 shrink-0 mt-0.5" /><p>{dupHistory ? 'No dismissed duplicate groups yet.' : 'No visually similar screenshots found.'}</p></div>
++          ) : dupVisible.map(g => <article key={g.id} className="rounded-xl border border-brand-100 bg-white p-3">
++            <p className="text-[10px] uppercase tracking-wider text-brand-700 font-semibold mb-1">{g.status === 'pending' ? 'Duplicate suggestion' : 'Kept — not treated as duplicates'}</p>
++            <h3 className="text-sm font-semibold text-brand-950">{g.screenshotIds.length} similar screenshots</h3>
++            <div className="flex flex-wrap items-center gap-2 mt-3">
++              {g.status === 'pending' ? <button disabled={duplicates.loading || !!duplicates.busyId} className="small-primary" onClick={() => onReviewDuplicates(g)}>Review<ChevronRight size={13} /></button> : <button disabled={!!duplicates.busyId} className="text-xs text-brand-700 flex items-center gap-1 py-1" onClick={() => void resetDup(g.id)}><RotateCcw size={12} />Review again</button>}
++            </div>
++          </article>)}
++        </div>
++      </section>
++
+       <section className="insight-section suggestions-section" aria-labelledby="suggestions-title">
+         <div className="px-5 pt-4 pb-3 flex items-start justify-between gap-2 border-b border-brand-100/70">
+           <div><h2 id="suggestions-title" className="font-semibold text-brand-950 flex items-center gap-2"><Sparkles size={16} className="text-brand-600" />{history ? 'Action history' : 'Suggested actions'}</h2><p className="text-[11px] text-stone-500 mt-1">You choose what happens next.</p></div>
+diff --git a/src/duplicate-types.ts b/src/duplicate-types.ts
+new file mode 100644
+index 0000000..df044cc
+--- /dev/null
++++ b/src/duplicate-types.ts
+@@ -0,0 +1,14 @@
++export interface DuplicateGroup {
++  /** Stable identity for this exact set of screenshot IDs (`dup:` + sorted IDs, joined). */
++  id: string;
++  /** Screenshot IDs in the group, newest first. */
++  screenshotIds: string[];
++  /** Largest pairwise Hamming distance found while assembling this group (0 = pixel-identical hash). */
++  maxDistance: number;
++}
++
++export interface DuplicateDecision {
++  id: string;
++  status: 'dismissed';
++  updatedAt: number;
++}
+diff --git a/src/hooks/useDuplicates.ts b/src/hooks/useDuplicates.ts
+new file mode 100644
+index 0000000..4ffd608
+--- /dev/null
++++ b/src/hooks/useDuplicates.ts
+@@ -0,0 +1,93 @@
++import { useEffect, useMemo, useRef, useState } from 'react';
++import type { Screenshot } from '@/types';
++import type { DuplicateDecision, DuplicateGroup } from '@/duplicate-types';
++import { findDuplicateGroups } from '@/lib/duplicates';
++import {
++  readDuplicateDecisions,
++  saveDuplicateDecision,
++  deleteDuplicateDecision,
++  pruneDuplicateDecisions,
++} from '@/lib/duplicate-decisions';
++
++export type DuplicateGroupWithStatus = DuplicateGroup & { status: 'pending' | 'dismissed' };
++
++/** Pass loaded=false until the parent has finished loading its screenshot database. */
++export function useDuplicates(items: Screenshot[], loaded: boolean) {
++  const [decisions, setDecisions] = useState<DuplicateDecision[]>([]);
++  const [decisionsLoaded, setDecisionsLoaded] = useState(false);
++  const [error, setError] = useState('');
++  const [busyId, setBusyId] = useState<string | null>(null);
++  const lock = useRef(false);
++
++  // Regroup only when identity-relevant fields change — ignore blob/thumbnail/OCR churn.
++  const signature = JSON.stringify(items.map(({ id, createdAt, size, phash }) => ({ id, createdAt, size, phash })));
++  const groups = useMemo(() => findDuplicateGroups(JSON.parse(signature) as Screenshot[]), [signature]);
++
++  useEffect(() => {
++    let active = true;
++    readDuplicateDecisions()
++      .then((values) => { if (active) setDecisions(values); })
++      .catch((e) => { if (active) setError(String(e)); })
++      .finally(() => { if (active) setDecisionsLoaded(true); });
++    return () => { active = false; };
++  }, []);
++
++  useEffect(() => {
++    if (!loaded || !decisionsLoaded) return;
++    let active = true;
++    pruneDuplicateDecisions(groups.map((g) => g.id)).catch((e) => { if (active) setError(String(e)); });
++    return () => { active = false; };
++  }, [loaded, decisionsLoaded, groups]);
++
++  const withStatus: DuplicateGroupWithStatus[] = groups.map((g) => ({
++    ...g,
++    status: decisions.find((d) => d.id === g.id)?.status ?? 'pending',
++  }));
++  const pendingGroups = withStatus.filter((g) => g.status === 'pending');
++
++  async function dismissGroup(id: string): Promise<void> {
++    if (lock.current) throw new Error('Wait for the current action to finish.');
++    if (!loaded || !decisionsLoaded) throw new Error('Wait for the library to finish loading.');
++    lock.current = true;
++    setBusyId(id);
++    setError('');
++    try {
++      const decision: DuplicateDecision = { id, status: 'dismissed', updatedAt: Date.now() };
++      await saveDuplicateDecision(decision);
++      setDecisions((prev) => [...prev.filter((d) => d.id !== id), decision]);
++    } catch (e) {
++      setError(e instanceof Error ? e.message : String(e));
++      throw e;
++    } finally {
++      lock.current = false;
++      setBusyId(null);
++    }
++  }
++
++  async function resetGroup(id: string): Promise<void> {
++    if (lock.current) throw new Error('Wait for the current action to finish.');
++    lock.current = true;
++    setBusyId(id);
++    try {
++      await deleteDuplicateDecision(id);
++      setDecisions((prev) => prev.filter((d) => d.id !== id));
++      setError('');
++    } catch (e) {
++      setError(String(e));
++      throw e;
++    } finally {
++      lock.current = false;
++      setBusyId(null);
++    }
++  }
++
++  return {
++    groups: withStatus,
++    pendingGroups,
++    loading: !loaded || !decisionsLoaded,
++    error,
++    busyId,
++    dismissGroup,
++    resetGroup,
++  };
++}
+diff --git a/src/index.css b/src/index.css
+index 3800219..9b3a1d5 100644
+--- a/src/index.css
++++ b/src/index.css
+@@ -53,7 +53,7 @@
+     .app-shell { height:100dvh; @apply flex flex-col overflow-hidden; }
+     .snapsort-workspace { grid-template-columns:minmax(0,3fr) minmax(0,1fr); @apply flex-1 min-h-0; }
+     .library-pane { @apply overflow-y-auto pr-2; }
+-    .insights-panel { grid-template-rows:minmax(0,7fr) minmax(0,3fr); @apply min-h-0; }
++    .insights-panel { grid-template-rows:minmax(0,4fr) minmax(0,3fr) minmax(0,3fr); @apply min-h-0; }
+   }
+   @media (max-width:1023px) { .insight-section { max-height:480px; } }
+ }
+diff --git a/src/lib/duplicate-decisions.ts b/src/lib/duplicate-decisions.ts
+new file mode 100644
+index 0000000..b759a55
+--- /dev/null
++++ b/src/lib/duplicate-decisions.ts
+@@ -0,0 +1,58 @@
++import type { DuplicateDecision } from '@/duplicate-types';
++
++async function open(): Promise<IDBDatabase> {
++  return new Promise((resolve, reject) => {
++    const req = indexedDB.open('snapsort-duplicates', 1);
++    req.onupgradeneeded = () => req.result.createObjectStore('decisions', { keyPath: 'id' });
++    req.onsuccess = () => resolve(req.result);
++    req.onerror = () => reject(req.error);
++  });
++}
++
++export async function readDuplicateDecisions(): Promise<DuplicateDecision[]> {
++  const db = await open();
++  return new Promise((resolve, reject) => {
++    const tx = db.transaction('decisions', 'readonly');
++    const req = tx.objectStore('decisions').getAll();
++    tx.oncomplete = () => { db.close(); resolve(req.result); };
++    tx.onabort = () => { db.close(); reject(tx.error ?? new Error('Cannot read duplicate decisions.')); };
++  });
++}
++
++export async function saveDuplicateDecision(decision: DuplicateDecision): Promise<void> {
++  const db = await open();
++  return new Promise((resolve, reject) => {
++    const tx = db.transaction('decisions', 'readwrite');
++    tx.objectStore('decisions').put(decision);
++    tx.oncomplete = () => { db.close(); resolve(); };
++    tx.onabort = () => { db.close(); reject(tx.error ?? new Error('Cannot save duplicate decision.')); };
++  });
++}
++
++export async function deleteDuplicateDecision(id: string): Promise<void> {
++  const db = await open();
++  return new Promise((resolve, reject) => {
++    const tx = db.transaction('decisions', 'readwrite');
++    tx.objectStore('decisions').delete(id);
++    tx.oncomplete = () => { db.close(); resolve(); };
++    tx.onabort = () => { db.close(); reject(tx.error ?? new Error('Cannot reset duplicate decision.')); };
++  });
++}
++
++/** Drop decisions for groups that no longer exist in their exact previous form (membership changed). */
++export async function pruneDuplicateDecisions(validIds: string[]): Promise<void> {
++  const db = await open();
++  const valid = new Set(validIds);
++  return new Promise((resolve, reject) => {
++    const tx = db.transaction('decisions', 'readwrite');
++    const req = tx.objectStore('decisions').openCursor();
++    req.onsuccess = () => {
++      const cursor = req.result;
++      if (!cursor) return;
++      if (!valid.has((cursor.value as DuplicateDecision).id)) cursor.delete();
++      cursor.continue();
++    };
++    tx.oncomplete = () => { db.close(); resolve(); };
++    tx.onabort = () => { db.close(); reject(tx.error ?? new Error('Cannot clean up duplicate decisions.')); };
++  });
++}
+diff --git a/src/lib/duplicates.ts b/src/lib/duplicates.ts
+new file mode 100644
+index 0000000..bcbae93
+--- /dev/null
++++ b/src/lib/duplicates.ts
+@@ -0,0 +1,89 @@
++import type { Screenshot } from '@/types';
++import type { DuplicateGroup } from '@/duplicate-types';
++// Relative import (not the @/ alias): this module is exercised directly by the
++// plain-Node test runner, which doesn't understand Vite's path alias for
++// runtime (non-type) imports — see tests/duplicates.test.mjs.
++import { hammingDistance } from './phash.ts';
++
++const HASH_LENGTH = 16; // 64-bit dHash, as 16 hex characters
++// Out of 64 bits, empirically <=5 is a re-saved/re-compressed copy of the same
++// image; up to ~10 still reliably catches near-identical screenshots (minor
++// crop, small overlay) without much risk of unrelated images colliding.
++export const DEFAULT_DUPLICATE_THRESHOLD = 8;
++
++function find(parent: Map<string, string>, x: string): string {
++  let root = x;
++  while (parent.get(root) !== root) root = parent.get(root)!;
++  while (parent.get(x) !== root) {
++    const next = parent.get(x)!;
++    parent.set(x, root);
++    x = next;
++  }
++  return root;
++}
++
++function union(parent: Map<string, string>, a: string, b: string): void {
++  const ra = find(parent, a);
++  const rb = find(parent, b);
++  if (ra !== rb) parent.set(ra, rb);
++}
++
++/**
++ * Groups screenshots whose perceptual hashes are within `threshold` bits of
++ * each other (transitively — if A~B and B~C, all three land in one group).
++ * O(n^2) hash comparisons, which is cheap (a XOR + popcount per pair) and
++ * fine for a personal screenshot library; if this ever needs to scale to
++ * tens of thousands of images, bucket by a hash prefix first.
++ */
++export function findDuplicateGroups(
++  items: Screenshot[],
++  threshold = DEFAULT_DUPLICATE_THRESHOLD
++): DuplicateGroup[] {
++  const withHash = items.filter((s) => s.phash?.length === HASH_LENGTH);
++  const parent = new Map<string, string>();
++  for (const s of withHash) parent.set(s.id, s.id);
++
++  // Union first; only once every union is applied is find() stable enough to
++  // key a per-cluster maximum, since path compression can move a root mid-loop.
++  const matches: { a: string; b: string; distance: number }[] = [];
++  for (let i = 0; i < withHash.length; i++) {
++    for (let j = i + 1; j < withHash.length; j++) {
++      const a = withHash[i];
++      const b = withHash[j];
++      const distance = hammingDistance(a.phash!, b.phash!);
++      if (distance <= threshold) {
++        union(parent, a.id, b.id);
++        matches.push({ a: a.id, b: b.id, distance });
++      }
++    }
++  }
++
++  const best = new Map<string, number>();
++  for (const m of matches) {
++    const root = find(parent, m.a);
++    best.set(root, Math.max(best.get(root) ?? 0, m.distance));
++  }
++
++  const clusters = new Map<string, string[]>();
++  for (const s of withHash) {
++    const root = find(parent, s.id);
++    const arr = clusters.get(root) ?? [];
++    arr.push(s.id);
++    clusters.set(root, arr);
++  }
++
++  const byId = new Map(items.map((s) => [s.id, s]));
++  const groups: DuplicateGroup[] = [];
++  for (const [root, ids] of clusters) {
++    if (ids.length < 2) continue;
++    const sorted = [...ids].sort((a, b) => (byId.get(b)?.createdAt ?? 0) - (byId.get(a)?.createdAt ?? 0));
++    groups.push({
++      id: `dup:${[...ids].sort().join(',')}`,
++      screenshotIds: sorted,
++      maxDistance: best.get(root) ?? 0,
++    });
++  }
++  return groups.sort(
++    (a, b) => (byId.get(b.screenshotIds[0])?.createdAt ?? 0) - (byId.get(a.screenshotIds[0])?.createdAt ?? 0)
++  );
++}
+diff --git a/src/lib/phash.ts b/src/lib/phash.ts
+new file mode 100644
+index 0000000..e5e2598
+--- /dev/null
++++ b/src/lib/phash.ts
+@@ -0,0 +1,72 @@
++/**
++ * Perceptual "difference hash" (dHash) for near-duplicate detection.
++ *
++ * The image is downscaled to a tiny grayscale grid and encoded as whether
++ * each pixel is brighter than its right-hand neighbor. Visually similar
++ * images (a re-saved copy, a re-compressed JPEG, a screenshot taken twice
++ * seconds apart) produce hashes that differ in only a few bits, so
++ * near-duplicates can be found with a cheap Hamming-distance comparison
++ * instead of comparing full images pixel-by-pixel.
++ *
++ * This intentionally ignores OCR text: two screenshots of the same page
++ * with different annotations drawn on top will still hash as near-identical,
++ * which is what "possible duplicate" should mean here.
++ */
++const HASH_WIDTH = 9; // one extra column so each row yields 8 left/right comparisons
++const HASH_HEIGHT = 8; // 8 rows * 8 comparisons/row = 64 bits total
++
++export async function computeDHash(blob: Blob): Promise<string> {
++  const url = URL.createObjectURL(blob);
++  try {
++    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
++      const i = new Image();
++      i.onload = () => resolve(i);
++      i.onerror = () => reject(new Error('Could not load image for duplicate detection.'));
++      i.src = url;
++    });
++    const canvas = document.createElement('canvas');
++    canvas.width = HASH_WIDTH;
++    canvas.height = HASH_HEIGHT;
++    const ctx = canvas.getContext('2d', { willReadFrequently: true });
++    if (!ctx) throw new Error('Canvas not supported.');
++    ctx.drawImage(img, 0, 0, HASH_WIDTH, HASH_HEIGHT);
++    const { data } = ctx.getImageData(0, 0, HASH_WIDTH, HASH_HEIGHT);
++    const gray: number[] = [];
++    for (let i = 0; i < data.length; i += 4) {
++      gray.push(0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]);
++    }
++    let bits = '';
++    for (let row = 0; row < HASH_HEIGHT; row++) {
++      for (let col = 0; col < HASH_WIDTH - 1; col++) {
++        const left = gray[row * HASH_WIDTH + col];
++        const right = gray[row * HASH_WIDTH + col + 1];
++        bits += left > right ? '1' : '0';
++      }
++    }
++    return bitsToHex(bits);
++  } finally {
++    URL.revokeObjectURL(url);
++  }
++}
++
++function bitsToHex(bits: string): string {
++  let hex = '';
++  for (let i = 0; i < bits.length; i += 4) {
++    hex += parseInt(bits.slice(i, i + 4).padEnd(4, '0'), 2).toString(16);
++  }
++  return hex;
++}
++
++/** Number of differing bits between two dHash hex strings. Mismatched lengths never compare as similar. */
++export function hammingDistance(hexA: string, hexB: string): number {
++  if (hexA.length !== hexB.length) return Number.MAX_SAFE_INTEGER;
++  let distance = 0;
++  for (let i = 0; i < hexA.length; i++) {
++    let x = parseInt(hexA[i], 16) ^ parseInt(hexB[i], 16);
++    while (x) {
++      distance += x & 1;
++      x >>= 1;
++    }
++  }
++  return distance;
++}
+diff --git a/src/types.ts b/src/types.ts
+index 1b99727..92d1554 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -14,6 +14,8 @@ export interface Screenshot {
+   error?: string;
+   previousOcrText?: string;
+   ocrMethod?: 'adaptive';
++  /** 64-bit perceptual hash (16 hex chars) used for duplicate detection. 'error' if hashing failed. */
++  phash?: string;
+ }
+ 
+ export interface OcrProgress {
+diff --git a/tests/duplicates.test.mjs b/tests/duplicates.test.mjs
+new file mode 100644
+index 0000000..dd8522c
+--- /dev/null
++++ b/tests/duplicates.test.mjs
+@@ -0,0 +1,59 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import { hammingDistance } from '../src/lib/phash.ts';
++import { findDuplicateGroups, DEFAULT_DUPLICATE_THRESHOLD } from '../src/lib/duplicates.ts';
++
++const shot = (id, phash, extra = {}) => ({
++  id,
++  name: `${id}.png`,
++  status: 'ready',
++  createdAt: 0,
++  size: 1000,
++  phash,
++  ...extra,
++});
++
++test('hammingDistance counts differing bits, and treats mismatched lengths as maximally different', () => {
++  assert.equal(hammingDistance('0000000000000000', '0000000000000000'), 0);
++  assert.equal(hammingDistance('0000000000000000', 'f000000000000000'), 4);
++  assert.equal(hammingDistance('ffffffffffffffff', '0000000000000000'), 64);
++  assert.equal(hammingDistance('00', '000'), Number.MAX_SAFE_INTEGER);
++});
++
++test('near-identical hashes are grouped; unrelated hashes are not', () => {
++  const groups = findDuplicateGroups([
++    shot('a', '0000000000000000', { createdAt: 3 }),
++    shot('b', '0000000000000001', { createdAt: 2 }), // 1 bit off -> same group as a
++    shot('c', 'ffffffffffffffff', { createdAt: 1 }), // maximally different -> its own group (size 1, dropped)
++  ]);
++  assert.equal(groups.length, 1);
++  assert.deepEqual(groups[0].screenshotIds, ['a', 'b']); // newest first
++});
++
++test('transitive chains merge into one group even if the endpoints are past the threshold apart', () => {
++  // a~b close, b~c close, but a~c alone would be too far apart
++  const groups = findDuplicateGroups([
++    shot('a', '0000000000000000'),
++    shot('b', '0000000000000007'), // 3 bits from a
++    shot('c', '000000000000003f'), // 3 bits from b, 6 bits from a
++  ], 3);
++  assert.equal(groups.length, 1);
++  assert.equal(groups[0].screenshotIds.length, 3);
++});
++
++test('items without a valid hash (missing, or the "error" sentinel) are ignored', () => {
++  const groups = findDuplicateGroups([
++    shot('a', '0000000000000000'),
++    shot('b', undefined),
++    shot('c', 'error'),
++  ]);
++  assert.equal(groups.length, 0);
++});
++
++test('groups only form above 2 members and use a stable, set-based id', () => {
++  const items = [shot('a', '0000000000000000'), shot('b', '0000000000000001')];
++  const g1 = findDuplicateGroups(items);
++  const g2 = findDuplicateGroups([...items].reverse());
++  assert.equal(g1[0].id, g2[0].id);
++  assert.ok(DEFAULT_DUPLICATE_THRESHOLD > 0);
++});
+-- 
+2.43.0
+
