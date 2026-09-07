@@ -58,3 +58,9 @@ Model: https://huggingface.co/Xenova/all-MiniLM-L6-v2
 Choose **OCR lab** in the header. Add up to 20 PNG/JPEG/WebP samples, label their type and enter the correct transcription. Compare the unprocessed originals; the lab reports setup, recognition and total time separately, plus character/word error rates. Normalization collapses whitespace and applies Unicode NFC while preserving case and punctuation. Error rates can exceed 100% for insertions. Very long text is not scored. Memory consumption is not measured. Reports contain source filenames and transcriptions, but no image bytes. Samples/results are temporary until exported; the main screenshot library is untouched.
 
 The lab now compares Tesseract's standard Otsu thresholding with local Sauvola adaptive thresholding using the same English model. PaddleOCR has been removed. No extra installation or model is required beyond the existing Tesseract setup. Original files remain unchanged. This does not detect highlight meaning, interpret arrows, or guarantee handwriting/calligraphy recognition.
+
+## Improve text recognition in the library
+
+Open a ready screenshot and choose **Improve text recognition**. Adaptive Tesseract runs in a separate worker with cancellation and a three-minute timeout. Compare the current text with the adaptive result and choose **Use improved text** or **Keep current text**. Empty, identical or stale candidates cannot be applied. Accepted changes are saved before the UI updates; the previous transcription is retained in the screenshot record. The original image remains unchanged. Existing text-dependent search indexing, categories and calendar suggestions refresh from the accepted text. No automatic accuracy claim is made.
+
+This update passed TypeScript, production build and the 19 existing automated tests. The newly added browser approval flow still needs a live UI check; those existing tests do not cover its IndexedDB transaction or buttons.

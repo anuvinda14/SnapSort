@@ -49,3 +49,28 @@ export async function dbDelete(id: string): Promise<void> {
 export async function dbClear(): Promise<void> {
   await tx('readwrite', (s) => s.clear());
 }
+
+// Compare and replace within one transaction, so a stale review cannot overwrite newer OCR.
+export async function dbAcceptOcr(id: string, expectedText: string, text: string): Promise<Screenshot> {
+  if (!text.trim()) throw new Error('No recognised text to save. Keep the current text instead.');
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(STORE, 'readwrite');
+    const store = transaction.objectStore(STORE);
+    let updated: Screenshot;
+    let failure: Error | null = null;
+    const request = store.get(id);
+    request.onsuccess = () => {
+      const current = request.result as Screenshot | undefined;
+      if (!current || current.status !== 'ready' || current.text !== expectedText) {
+        failure = new Error('This screenshot changed or was deleted. Close and reopen it before trying again.');
+        transaction.abort(); return;
+      }
+      updated = { ...current, previousOcrText: current.text, text: text.trim(), ocrMethod: 'adaptive', progress: 1, error: undefined };
+      store.put(updated);
+    };
+    transaction.oncomplete = () => { db.close(); resolve(updated); };
+    transaction.onabort = () => { db.close(); reject(failure ?? transaction.error ?? new Error('Could not save the recognised text.')); };
+    transaction.onerror = () => { failure ??= new Error('Could not save the recognised text.'); };
+  });
+}

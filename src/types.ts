@@ -12,6 +12,8 @@ export interface Screenshot {
   text: string;
   progress: number;
   error?: string;
+  previousOcrText?: string;
+  ocrMethod?: 'adaptive';
 }
 
 export interface OcrProgress {

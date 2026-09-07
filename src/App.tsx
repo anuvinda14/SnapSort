@@ -1,3 +1,4 @@
+import { ImproveRecognition } from '@/components/ImproveRecognition';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Camera,
@@ -16,7 +17,7 @@ import {
   RotateCw,
 } from 'lucide-react';
 import type { Screenshot, ScreenshotStatus, OcrProgress } from '@/types';
-import { dbGetAll, dbPut, dbDelete, dbClear } from '@/lib/db';
+import { dbGetAll, dbPut, dbDelete, dbClear, dbAcceptOcr } from '@/lib/db';
 import { recognize, preloadWorker, resetWorker } from '@/lib/ocr';
 import { makeThumbnail, formatBytes, formatTime } from '@/lib/image';
 import { useSemanticSearch } from '@/hooks/useSemanticSearch';
@@ -412,6 +413,10 @@ export default function App() {
           onDelete={() => handleDelete(selected.id)}
           onCopy={handleCopy}
           onRetry={() => handleRetry(selected.id)}
+          onAcceptImproved={async (expected, text) => {
+            const updated = await dbAcceptOcr(selected.id, expected, text);
+            setItems(all => all.map(item => item.id === updated.id ? updated : item));
+          }}
           copied={copied}
         />
       )}
@@ -571,6 +576,7 @@ function DetailModal({
   onCopy,
   onRetry,
   copied,
+  onAcceptImproved,
 }: {
   screenshot: Screenshot;
   onClose: () => void;
@@ -578,6 +584,7 @@ function DetailModal({
   onCopy: (text: string) => void;
   onRetry: () => void;
   copied: boolean;
+  onAcceptImproved: (expected: string, text: string) => Promise<void>;
 }) {
   const [imgUrl, setImgUrl] = useState('');
 
@@ -662,6 +669,8 @@ function DetailModal({
                 </button>
               )}
             </div>
+
+            {s.status === 'ready' && <ImproveRecognition key={s.id} screenshot={s} onAccept={onAcceptImproved} />}
 
             {s.status === 'processing' && (
               <div className="flex flex-col items-center justify-center py-12 gap-3">
