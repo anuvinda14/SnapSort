@@ -1,14 +1,16 @@
 {
-  "name": "vite-react-typescript-starter",
+  "name": "snapsort",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit -p tsconfig.app.json"
+    "typecheck": "tsc --noEmit -p tsconfig.app.json",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs",
+    "check": "pnpm typecheck && pnpm test && pnpm build"
   },
   "dependencies": {
     "@huggingface/transformers": "3.8.1",

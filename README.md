@@ -1,78 +1,62 @@
 # SnapSort
 
-Private screenshot recall, running in your browser.
+**Find what you remember.** A privacy-first screenshot library with browser-local OCR, semantic search and manual duplicate review.
 
-## Run
+Screenshots capture useful information but are difficult to retrieve later. SnapSort helps students and anyone saving receipts, tickets or reference material search their screenshots without sending image contents to an OCR service.
 
-Use Node.js 20 or newer and pnpm 11.
+## Run locally or in Codespaces
+
+Use Node.js 24 and pnpm. From the folder containing `package.json`:
 
 ```sh
 pnpm install --frozen-lockfile
-pnpm dev
+pnpm dev --host 0.0.0.0
 ```
 
-Open the local URL printed in the terminal. Import PNG, JPEG, or WebP screenshots. The first use needs internet access to download OCR and semantic model assets.
+Open the URL/forwarded port printed by Vite. The first use needs internet for OCR and search-model downloads. Import PNG, JPEG or WebP images; files are stored in that browser origin's IndexedDB. A different port or browser has a separate library.
 
-## Features
+## What works in the prototype
 
-- Tesseract.js OCR in a browser worker.
-- Local semantic search with Transformers.js and the quantized Xenova/all-MiniLM-L6-v2 model.
-- Overlapping text chunks, normalized embeddings, cosine similarity ranking, and exact-text matches promoted first.
-- Images, OCR text, and embeddings stored in browser IndexedDB. No login or application backend.
-- Text search remains available if semantic setup fails.
+- **Text recognition:** English Tesseract.js OCR in browser workers, with progress and retry controls.
+- **Search:** exact words/numbers or local semantic retrieval using Transformers.js and quantized `Xenova/all-MiniLM-L6-v2`. Search is based on OCR text, not a visual understanding model.
+- **Improve text recognition:** compare the current text with adaptive Sauvola OCR and approve replacement. Originals stay unchanged; accepted text refreshes search, categories and suggestions.
+- **Categories:** local text rules organize screenshots into events, travel, receipts, study, health, credentials and other. Screenshots may belong to multiple categories.
+- **Suggested calendar actions:** review extracted event details, correct them and approve a local `.ics` download. Open that file in a calendar to complete the import. No automatic calendar writes.
+- **Duplicate review:** stored 64-bit dHash, Hamming distance <=4, approximately 2% aspect-ratio tolerance, a five-band candidate index and union-find groups. Review thumbnails, select copies and confirm deletion. No automatic deletion. Dismissals persist.
+- **OCR lab:** compare standard and adaptive processing against a manually entered reference; export timings and character/word error rates locally.
 
-## Categories and suggested actions
+## Privacy and practical limits
 
-The desktop library and sidebar use a 3:1 split. The sidebar uses a 7:3 split for categories and suggested actions, with independent scrolling. On smaller screens the panels stack below the library.
+Image contents and search queries are processed locally by the application. OCR/model assets download from third-party hosts, which receive ordinary asset requests. This is **not a verified fully offline application**: there is no offline app-shell service worker. Browser data can be cleared or evicted and is not separately encrypted by SnapSort.
 
-Categories are detected from OCR text using local rules: events, travel, receipts, study, health, credentials and other. A screenshot can match multiple categories. Category selection combines with the current search.
+Highlight-aware text extraction can improve some screenshots but worsen others. Highlight semantics, arrow interpretation and reliable handwriting/calligraphy recognition are not implemented. Cropping and large annotations can prevent duplicate matches; similar layouts or changed amounts/dates can cause false matches. Duplicate groups can contain transitive chains rather than every pair being within the threshold. Dense hash collisions can still be expensive. Always review before deletion or calendar export.
 
-Event, appointment and deadline text can produce a calendar suggestion. Review the source screenshot, edit title/date/time/location, select timed or all-day, confirm details and approve to download an `.ics` file. Open that file in a calendar application to complete the import. No calendar account is connected and nothing is added automatically. Dismissed and exported actions are saved locally, with a history view and a Review again action.
+This is a browser prototype, not a native mobile app or automatic background camera-roll scanner. Categories and action suggestions use rules, not generative AI. A Codespaces preview requires a running Codespace and appropriate viewer access; it is not a permanent deployment.
 
-These suggestions are rule-based, not generative AI. Ambiguous or missing dates require review. No full screenshot text is automatically copied into calendar notes. Clearing browser storage removes stored screenshots and action history.
-
-## Demo
-
-Import a repair receipt, flight itinerary, and programming notes. Compare Text search with Semantic search using “bike repair bill”, “my plane ticket”, and “beginner coding notes”. Exact phrases do not have to appear in the screenshot for semantic matching.
-
-## Privacy and limits
-
-Images and search phrases are processed locally. Public OCR/model assets download from third-party hosts; those hosts receive normal asset requests, not screenshot contents or queries. Model assets may be cached by the browser. Full offline reload and fresh OCR are not yet verified; this prototype does not include an offline app-shell service worker. Browser storage can be cleared or evicted and is not separately encrypted by this app.
-
-Semantic matching uses extracted text, not a vision model: it cannot interpret unlabeled chart geometry, arrows, or relationships. Similarity results are suggestions, not guaranteed answers. The 0.22 retrieval threshold is a prototype setting and has not been calibrated on a large benchmark. This is a browser prototype, not a native mobile app or background camera-roll scanner.
-
-## Checks
+## Validation
 
 ```sh
-pnpm typecheck
-pnpm build
-node --experimental-strip-types --test tests/insights.test.mjs
+pnpm check
 ```
 
-The test command requires Node.js 22.6+ (Node 24 recommended).
+Runs TypeScript, all 25 automated tests and the production build. Tests cover category/event extraction, calendar validation, OCR scoring and perceptual-hash grouping. They do not substitute for browser interaction tests.
 
-Model: https://huggingface.co/Xenova/all-MiniLM-L6-v2
+During development, browser OCR/search and calendar-file preparation were exercised. A user-supplied highlighted sample reduced character error rate from 8.12% to 0.68% with adaptive OCR; another sample became worse. This is a small exploratory comparison, **not a general accuracy benchmark**. End-to-end persistence, improved-text approval and duplicate deletion still warrant the manual checks in [the demo guide](docs/DEMO.md).
 
-## Experimental OCR comparison lab
+## Project structure
 
-Choose **OCR lab** in the header. Add up to 20 PNG/JPEG/WebP samples, label their type and enter the correct transcription. Compare the unprocessed originals; the lab reports setup, recognition and total time separately, plus character/word error rates. Normalization collapses whitespace and applies Unicode NFC while preserving case and punctuation. Error rates can exceed 100% for insertions. Very long text is not scored. Memory consumption is not measured. Reports contain source filenames and transcriptions, but no image bytes. Samples/results are temporary until exported; the main screenshot library is untouched.
+```text
+public/             Logo
+src/components/     Library dialogs, insights panel and OCR lab
+src/hooks/          Semantic search, insights and duplicate coordination
+src/lib/            Browser storage, OCR, image utilities and algorithms
+src/workers/        Semantic search, adaptive OCR and image hashing
+src/App.tsx         Main library
+src/main.tsx        Application entry point
+scripts/            Conservative repository cleanup helper
+tests/              Automated algorithm and validation tests
+```
 
-The lab now compares Tesseract's standard Otsu thresholding with local Sauvola adaptive thresholding using the same English model. PaddleOCR has been removed. No extra installation or model is required beyond the existing Tesseract setup. Original files remain unchanged. This does not detect highlight meaning, interpret arrows, or guarantee handwriting/calligraphy recognition.
+Development: React, TypeScript, Vite, Tailwind CSS and Lucide icons. OCR: [Tesseract.js](https://github.com/naptha/tesseract.js). Semantic model: [all-MiniLM-L6-v2](https://huggingface.co/Xenova/all-MiniLM-L6-v2).
 
-## Improve text recognition in the library
-
-Open a ready screenshot and choose **Improve text recognition**. Adaptive Tesseract runs in a separate worker with cancellation and a three-minute timeout. Compare the current text with the adaptive result and choose **Use improved text** or **Keep current text**. Empty, identical or stale candidates cannot be applied. Accepted changes are saved before the UI updates; the previous transcription is retained in the screenshot record. The original image remains unchanged. Existing text-dependent search indexing, categories and calendar suggestions refresh from the accepted text. No automatic accuracy claim is made.
-
-This update passed TypeScript, production build and the 19 existing automated tests. The newly added browser approval flow still needs a live UI check; those existing tests do not cover its IndexedDB transaction or buttons.
-
-## Duplicate review
-
-The **Duplicates** header button opens groups of visually similar screenshots. Nothing is preselected. Enlarge images, select copies to delete, and confirm the named selection. At least one member must remain. Deletion affects SnapSort's stored copies, not source files on the device. “Not actually duplicates” persists a dismissal; “Show dismissed groups” restores dismissed suggestions. Removing members keeps a dismissal effective, while adding a new match can resurface the expanded group.
-
-Implementation: versioned 64-bit horizontal dHash from a 9×8 luminance image, composited over white. Hamming distance <=4 and approximately 2% aspect-ratio tolerance. A five-band in-memory candidate index avoids testing every unrelated pair; union-find produces connected groups, so a group's endpoints may be further apart than the threshold. The index is rebuilt when stored hashes/membership change, never for OCR progress or search queries. Dense collisions can still have quadratic candidate counts; this is not a constant-time guarantee.
-
-Hashes and dismissals are stored separately in IndexedDB (`snapsort-duplicates`). New imports are queued for worker hashing alongside the OCR pipeline. Older unhashed screenshots are checked once in the background, and hashes are reused on reload. Failed image checks show a retry option. Hash workers are cancelled when the library changes or the component unmounts. No remote OCR/model request is used for hashing.
-
-Pixel hashing is independent of OCR. Small compression changes or minor marks may retain a match, but large annotations, cropping, rotation or extensive highlights may not. Repeated document layouts, blank pages and small differences in dates/amounts can cause false positives. The 4-bit threshold is conservative but not calibrated against a representative screenshot corpus. Manual review is essential; matches are not proof of equality.
-
-Validation: TypeScript and production build pass. Six duplicate-algorithm tests cover edge hashing/brightness shifts, distance boundaries, proportion checks, transitive grouping, dismissal membership and indexed retrieval of 150 generated near-matches. The prior 19 tests also pass. Browser persistence/deletion interaction and real JPEG re-export detection have not been exercised in this environment. Suggested smoke test: import the same image twice plus a JPEG re-export, review/dismiss/reload, restore the group, delete a selected copy, and reload to verify it stays deleted while another OCR job completes.
+For an older repository containing root-level source copies, run `node scripts/cleanup.mjs` to preview cleanup, then `node scripts/cleanup.mjs --apply`. A backup is created outside the repository. Review the changes and run `pnpm check` before committing. Unknown files are left untouched.
