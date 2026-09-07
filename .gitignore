@@ -1,0 +1,10 @@
+node_modules
+
+node_modules/
+dist/
+.bolt/
+.env
+.env.*
+!.env.example
+.DS_Store
+package-lock.json
