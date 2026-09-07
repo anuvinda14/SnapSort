@@ -1,3 +1,5 @@
+import { useDuplicates } from '@/hooks/useDuplicates';
+import { DuplicateReview } from '@/components/DuplicateReview';
 import { ImproveRecognition } from '@/components/ImproveRecognition';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -17,7 +19,7 @@ import {
   RotateCw,
 } from 'lucide-react';
 import type { Screenshot, ScreenshotStatus, OcrProgress } from '@/types';
-import { dbGetAll, dbPut, dbDelete, dbClear, dbAcceptOcr } from '@/lib/db';
+import { dbGetAll, dbPut, dbDelete, dbClear, dbAcceptOcr, dbPatch, dbDeleteDuplicates } from '@/lib/db';
 import { recognize, preloadWorker, resetWorker } from '@/lib/ocr';
 import { makeThumbnail, formatBytes, formatTime } from '@/lib/image';
 import { useSemanticSearch } from '@/hooks/useSemanticSearch';
@@ -45,6 +47,8 @@ export default function App() {
   const processingRef = useRef(false);
   const semantic = useSemanticSearch(items, query, searchMode === 'semantic', !loading);
 
+  const duplicates = useDuplicates(items, !loading);
+  const [showDuplicates, setShowDuplicates] = useState(false);
   const panel = useScreenshotInsights(items, !loading);
   const [review, setReview] = useState<CalendarSuggestion | null>(null);
   const [notice, setNotice] = useState('');
@@ -96,13 +100,9 @@ export default function App() {
     initOcr();
   }, [initOcr]);
 
-  const updateItem = useCallback((id: string, patch: Partial<Screenshot>) => {
-    setItems((prev) => {
-      const next = prev.map((it) => (it.id === id ? { ...it, ...patch } : it));
-      const updated = next.find((it) => it.id === id);
-      if (updated) dbPut(updated).catch((e) => console.error('dbPut failed', e));
-      return next;
-    });
+  const updateItem = useCallback(async (id: string, patch: Partial<Screenshot>) => {
+    const updated = await dbPatch(id, patch);
+    if (updated) setItems(all => all.map(item => item.id === id ? { ...item, ...patch } : item));
   }, []);
 
   const processQueue = useCallback(async () => {
@@ -114,14 +114,14 @@ export default function App() {
       while (true) {
         const next = snapshot.find((s) => s.status === 'queued');
         if (!next) break;
-        updateItem(next.id, { status: 'processing', progress: 0, error: undefined });
+        await updateItem(next.id, { status: 'processing', progress: 0, error: undefined });
         try {
           const text = await recognize(next.blob, (p) => {
-            updateItem(next.id, { progress: p.progress });
+            setItems(all => all.map(item => item.id === next.id ? { ...item, progress: p.progress } : item));
           });
-          updateItem(next.id, { status: 'ready', text, progress: 1 });
+          await updateItem(next.id, { status: 'ready', text, progress: 1 });
         } catch (e) {
-          updateItem(next.id, {
+          await updateItem(next.id, {
             status: 'failed',
             error: e instanceof Error ? e.message : 'OCR failed',
           });
@@ -201,8 +201,8 @@ export default function App() {
   }, []);
 
   const handleRetry = useCallback(
-    (id: string) => {
-      updateItem(id, { status: 'queued', error: undefined, progress: 0 });
+    async (id: string) => {
+      await updateItem(id, { status: 'queued', error: undefined, progress: 0 });
       processQueue();
     },
     [updateItem, processQueue]
@@ -250,6 +250,7 @@ export default function App() {
               </div>
             </div>
             <div className="flex items-center gap-2">
+              <button onClick={() => setShowDuplicates(true)} className="text-sm font-medium text-brand-700 px-3 py-2 rounded-lg hover:bg-brand-50">Duplicates{duplicates.groups.length ? ` (${duplicates.groups.length})` : ''}</button>
               <a href="?ocr-lab" className="text-sm font-medium text-brand-700 px-3 py-2 rounded-lg hover:bg-brand-50">OCR lab</a>
               {items.length > 0 && (
                 <button
@@ -405,6 +406,11 @@ export default function App() {
         setNotice('Calendar file prepared. Open the downloaded file in your calendar to add the event.');
       }} />}
 
+      {showDuplicates && <DuplicateReview items={items} data={duplicates} onClose={() => setShowDuplicates(false)} onDelete={async (ids, group) => {
+        await dbDeleteDuplicates(ids, group);
+        setItems(all => all.filter(item => !ids.includes(item.id)));
+        if (selected && ids.includes(selected.id)) setSelected(null);
+      }} />}
       {/* Detail modal */}
       {selected && (
         <DetailModal

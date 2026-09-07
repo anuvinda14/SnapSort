@@ -74,3 +74,19 @@ export async function dbAcceptOcr(id: string, expectedText: string, text: string
     transaction.onerror = () => { failure ??= new Error('Could not save the recognised text.'); };
   });
 }
+
+export async function dbPatch(id: string, patch: Partial<Screenshot>): Promise<Screenshot | undefined> {
+  const db=await openDb();return new Promise((resolve,reject)=>{
+    const t=db.transaction(STORE,'readwrite'),store=t.objectStore(STORE);let updated:Screenshot|undefined;
+    const r=store.get(id);r.onsuccess=()=>{if(r.result){updated={...r.result,...patch,id};store.put(updated);}};
+    t.oncomplete=()=>{db.close();resolve(updated);};t.onabort=()=>{db.close();reject(t.error??new Error('Could not update screenshot.'));};
+  });
+}
+export async function dbDeleteDuplicates(ids:string[], group:string[]):Promise<void>{
+  if(!ids.length||ids.some(id=>!group.includes(id))||new Set(ids).size>=new Set(group).size)throw new Error('Keep at least one screenshot in the group.');
+  const db=await openDb();return new Promise((resolve,reject)=>{
+    const t=db.transaction(STORE,'readwrite'),store=t.objectStore(STORE);let found=0,checked=0;let failure:Error|null=null;
+    for(const id of group){const r=store.get(id);r.onsuccess=()=>{if(r.result)found++;checked++;if(checked===group.length){if(found!==group.length){failure=new Error('This group changed. Close and reopen duplicate review.');t.abort();}else ids.forEach(id=>store.delete(id));}};}
+    t.oncomplete=()=>{db.close();resolve();};t.onabort=()=>{db.close();reject(failure??t.error??new Error('Could not delete screenshots.'));};
+  });
+}
