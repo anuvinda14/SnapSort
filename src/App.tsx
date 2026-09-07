@@ -249,6 +249,7 @@ export default function App() {
               </div>
             </div>
             <div className="flex items-center gap-2">
+              <a href="?ocr-lab" className="text-sm font-medium text-brand-700 px-3 py-2 rounded-lg hover:bg-brand-50">OCR lab</a>
               {items.length > 0 && (
                 <button
                   onClick={handleClear}
